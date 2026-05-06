@@ -1,10 +1,10 @@
 from test_agent.agent import AutoTestAgent
 from test_agent.config import AgentConfig
-from test_agent.models import TestRunResult
+from test_agent.models import TestRunResult as RunResult
 
 
 class DummyRunner:
-    def run(self, command: list[str]) -> TestRunResult:
+    def run(self, command: list[str]) -> RunResult:
         stdout = """
 ============================= test session starts =============================
 collected 1 item
@@ -20,7 +20,7 @@ E       assert 2 == 3
 FAILED tests/test_sample.py::test_addition_failure - AssertionError: assert 2 == 3
 ============================== 1 failed in 0.01s ==============================
 """.strip()
-        return TestRunResult(
+        return RunResult(
             command=command,
             return_code=1,
             stdout=stdout,
