@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auto-test-agent"
+version = "0.1.0"
+description = "A lightweight automation testing agent project."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Auto Test Agent" }
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2.0"
+]
+
+[project.scripts]
+auto-test-agent = "test_agent.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
