@@ -2,5 +2,6 @@
 
 from .agent import AutoTestAgent
 from .config import AgentConfig
+from .workflow import WorkflowTestAgent
 
-__all__ = ["AutoTestAgent", "AgentConfig"]
+__all__ = ["AutoTestAgent", "AgentConfig", "WorkflowTestAgent"]
