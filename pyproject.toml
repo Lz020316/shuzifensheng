@@ -25,6 +25,10 @@ dev = [
 playwright = [
   "playwright>=1.55.0"
 ]
+db = [
+  "psycopg[binary]>=3.2.10",
+  "pymysql>=1.1.2"
+]
 
 [project.scripts]
 auto-test-agent = "test_agent.cli:main"

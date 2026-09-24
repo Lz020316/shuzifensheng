@@ -41,7 +41,7 @@ def test_runtime_client_query_db_read_only(tmp_path: Path) -> None:
     conn.commit()
     conn.close()
 
-    client = PlaywrightRuntimeClient(db_path=str(db_file))
+    client = PlaywrightRuntimeClient(db_url=f"sqlite:///{db_file}")
     response = client.invoke("query_db", {"sql": "SELECT name FROM users"})
     assert response["ok"] is True
     assert response["row_count"] == 1

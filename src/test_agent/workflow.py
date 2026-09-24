@@ -32,8 +32,11 @@ class WorkflowTestAgent:
         *,
         runtime_mode: str = "mock",
         base_url: str = "",
+        db_url: str = "",
         db_path: str = "",
         artifacts_dir: str = "artifacts",
+        storage_state_path: str = "",
+        persist_storage_state: bool = True,
         browser_headless: bool = True,
         mcp_endpoint: str | None = None,
         mcp_token: str = "",
@@ -46,8 +49,11 @@ class WorkflowTestAgent:
         elif runtime_mode == "playwright":
             client = PlaywrightRuntimeClient(
                 base_url=base_url,
+                db_url=db_url,
                 db_path=db_path,
                 artifacts_dir=artifacts_dir,
+                storage_state_path=storage_state_path,
+                persist_storage_state=persist_storage_state,
                 headless=browser_headless,
             )
         else:

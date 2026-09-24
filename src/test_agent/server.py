@@ -14,8 +14,9 @@ from pydantic import BaseModel, Field
 import uvicorn
 
 from .reporting import render_report_html
-from .storage import RunRecord, TaskRecord, TaskRepository
+from .storage import RunJobRecord, RunRecord, TaskRecord, TaskRepository
 from .workflow import WorkflowTestAgent
+from .worker import RunJobWorkerPool
 
 DEFAULT_DB_FILE = "data/agent.db"
 
@@ -30,10 +31,15 @@ class TaskCreateRequest(BaseModel):
     allow_private_url: bool = False
     allowed_domains: list[str] = Field(default_factory=list)
     base_url: str = ""
+    db_url: str = ""
     db_path: str = ""
     artifacts_dir: str = "artifacts"
+    storage_state_path: str = ""
+    persist_storage_state: bool = True
     browser_headless: bool = True
     auto_run: bool = True
+    auto_run_async: bool = False
+    max_attempts: int = Field(default=2, ge=1, le=10)
 
 
 class TaskRunRequest(BaseModel):
@@ -42,15 +48,44 @@ class TaskRunRequest(BaseModel):
     override_source: str | None = None
 
 
-def create_app(db_file: str = DEFAULT_DB_FILE) -> FastAPI:
+class RunJobCreateRequest(BaseModel):
+    """Request body for enqueueing a background run job."""
+
+    override_source: str = ""
+    max_attempts: int = Field(default=2, ge=1, le=10)
+
+
+def create_app(
+    db_file: str = DEFAULT_DB_FILE,
+    worker_count: int = 2,
+    poll_interval_seconds: float = 0.5,
+) -> FastAPI:
     """Create and configure FastAPI app."""
     repository = TaskRepository(db_file=db_file)
+    worker_pool = RunJobWorkerPool(
+        repository=repository,
+        execute_task_fn=lambda task, override_source: _execute_task(
+            repository=repository,
+            task=task,
+            override_source=override_source,
+        ),
+        worker_count=worker_count,
+        poll_interval_seconds=poll_interval_seconds,
+    )
 
     app = FastAPI(title="Auto Test Agent API", version="0.2.0")
 
     artifacts_dir = Path("artifacts")
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/artifacts", StaticFiles(directory=str(artifacts_dir)), name="artifacts")
+
+    @app.on_event("startup")
+    def on_startup() -> None:
+        worker_pool.start()
+
+    @app.on_event("shutdown")
+    def on_shutdown() -> None:
+        worker_pool.stop()
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -62,9 +97,14 @@ def create_app(db_file: str = DEFAULT_DB_FILE) -> FastAPI:
         source = config.pop("source")
         runtime_mode = config.pop("runtime_mode")
         auto_run = bool(config.pop("auto_run"))
+        auto_run_async = bool(config.pop("auto_run_async"))
+        max_attempts = int(config.pop("max_attempts"))
         task = repository.create_task(source=source, runtime_mode=runtime_mode, config=config)
         response: dict[str, Any] = {"task": _serialize_task(task)}
-        if auto_run:
+        if auto_run and auto_run_async:
+            job = repository.create_run_job(task_id=task.task_id, max_attempts=max_attempts)
+            response["job"] = _serialize_run_job(job)
+        elif auto_run:
             run = _execute_task(repository=repository, task=task)
             response["run"] = _serialize_run(run)
         return response
@@ -86,16 +126,24 @@ def create_app(db_file: str = DEFAULT_DB_FILE) -> FastAPI:
         task = repository.get_task(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="task not found")
-
-        if request.override_source:
-            config = json.loads(task.config_json)
-            task = repository.create_task(
-                source=request.override_source,
-                runtime_mode=task.runtime_mode,
-                config=config,
-            )
-        run = _execute_task(repository=repository, task=task)
+        run = _execute_task(
+            repository=repository,
+            task=task,
+            override_source=request.override_source or "",
+        )
         return {"task": _serialize_task(task), "run": _serialize_run(run)}
+
+    @app.post("/tasks/{task_id}/run-jobs")
+    def enqueue_run_job(task_id: int, request: RunJobCreateRequest) -> dict[str, Any]:
+        task = repository.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="task not found")
+        job = repository.create_run_job(
+            task_id=task_id,
+            override_source=request.override_source,
+            max_attempts=request.max_attempts,
+        )
+        return {"task": _serialize_task(task), "job": _serialize_run_job(job)}
 
     @app.get("/tasks/{task_id}/runs")
     def list_runs(task_id: int, limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
@@ -127,23 +175,43 @@ def create_app(db_file: str = DEFAULT_DB_FILE) -> FastAPI:
         report = json.loads(run.report_json)
         return render_report_html(run_id=run_id, report=report)
 
+    @app.get("/run-jobs")
+    def list_run_jobs(limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
+        jobs = repository.list_run_jobs(limit=limit)
+        return {"items": [_serialize_run_job(item) for item in jobs]}
+
+    @app.get("/run-jobs/{job_id}")
+    def get_run_job(job_id: int) -> dict[str, Any]:
+        job = repository.get_run_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="run job not found")
+        return {"job": _serialize_run_job(job)}
+
     return app
 
 
-def _execute_task(repository: TaskRepository, task: TaskRecord) -> RunRecord:
+def _execute_task(
+    repository: TaskRepository,
+    task: TaskRecord,
+    override_source: str = "",
+) -> RunRecord:
     config = json.loads(task.config_json)
+    source = override_source or task.source
     agent = WorkflowTestAgent.default(
         runtime_mode=task.runtime_mode,
         base_url=str(config.get("base_url", "")),
+        db_url=str(config.get("db_url", "")),
         db_path=str(config.get("db_path", "")),
         artifacts_dir=str(config.get("artifacts_dir", "artifacts")),
+        storage_state_path=str(config.get("storage_state_path", "")),
+        persist_storage_state=bool(config.get("persist_storage_state", True)),
         browser_headless=bool(config.get("browser_headless", True)),
         mcp_endpoint=config.get("mcp_endpoint"),
         mcp_token=str(config.get("mcp_token", "")),
         allow_private_url=bool(config.get("allow_private_url", False)),
         allowed_domains=tuple(config.get("allowed_domains", [])),
     )
-    report = agent.run(task.source)
+    report = agent.run(source)
     status = str(report.get("status", "error"))
     return repository.create_run(task_id=task.task_id, status=status, report=report)
 
@@ -159,6 +227,10 @@ def _serialize_run(run: RunRecord) -> dict[str, Any]:
     report = json.loads(run.report_json)
     data["report"] = report
     return data
+
+
+def _serialize_run_job(job: RunJobRecord) -> dict[str, Any]:
+    return asdict(job)
 
 
 def main() -> None:

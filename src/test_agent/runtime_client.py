@@ -6,11 +6,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import json
 import re
-import sqlite3
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
+
+from .db_readonly import execute_read_only_query
 
 _TOKEN_RE = re.compile(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_]{2,}")
 
@@ -20,11 +21,15 @@ class PlaywrightRuntimeClient:
     """Run action points against real targets with evidence artifacts."""
 
     base_url: str = ""
+    db_url: str = ""
     db_path: str = ""
     artifacts_dir: str = "artifacts"
+    storage_state_path: str = ""
+    persist_storage_state: bool = True
     headless: bool = True
     browser_timeout_ms: int = 10_000
     api_timeout_seconds: int = 12
+    api_retry_count: int = 1
     state: dict[str, Any] = field(default_factory=dict)
     _playwright: Any = field(default=None, init=False, repr=False)
     _browser: Any = field(default=None, init=False, repr=False)
@@ -101,6 +106,8 @@ class PlaywrightRuntimeClient:
         page.wait_for_timeout(200)
         self.state["page_text"] = page.locator("body").inner_text(timeout=self.browser_timeout_ms)
         self.state["page_title"] = page.title()
+        if target.lower() in {"login", "signin"}:
+            self._save_storage_state_if_enabled()
         return {"ok": True, "selector": selector, "target": target}
 
     def _handle_load_requirement_context(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -125,17 +132,28 @@ class PlaywrightRuntimeClient:
             headers["Content-Type"] = "application/json"
 
         request = Request(url=url, method=method, data=payload, headers=headers)
-        try:
-            with urlopen(request, timeout=self.api_timeout_seconds) as response:  # noqa: S310
-                status_code = getattr(response, "status", 200)
-                body = response.read().decode("utf-8", errors="replace")
-        except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            status_code = exc.code
-        except URLError as exc:
-            return {"ok": False, "error": f"API 网络错误: {exc.reason}"}
-        except OSError as exc:
-            return {"ok": False, "error": f"API 调用失败: {exc}"}
+        body = ""
+        status_code = 0
+        last_error = ""
+        attempts = max(1, self.api_retry_count)
+        for _ in range(attempts):
+            try:
+                with urlopen(request, timeout=self.api_timeout_seconds) as response:  # noqa: S310
+                    status_code = getattr(response, "status", 200)
+                    body = response.read().decode("utf-8", errors="replace")
+                last_error = ""
+                break
+            except HTTPError as exc:
+                body = exc.read().decode("utf-8", errors="replace")
+                status_code = exc.code
+                last_error = f"HTTP {exc.code}"
+                break
+            except URLError as exc:
+                last_error = f"API 网络错误: {exc.reason}"
+            except OSError as exc:
+                last_error = f"API 调用失败: {exc}"
+        if last_error and status_code == 0:
+            return {"ok": False, "error": last_error}
 
         self.state["last_api_response"] = body
         self.state["last_api_status"] = status_code
@@ -151,31 +169,36 @@ class PlaywrightRuntimeClient:
 
     def _handle_query_db(self, params: dict[str, Any]) -> dict[str, Any]:
         sql = str(params.get("sql", "")).strip()
-        if not sql:
-            return {"ok": False, "error": "sql is required"}
-        if not self._is_read_only_query(sql):
-            return {"ok": False, "error": "只允许只读 SQL（SELECT/WITH）"}
-
+        db_url = str(params.get("db_url", "")).strip() or self.db_url
         db_path = str(params.get("db_path", "")).strip() or self.db_path
-        if not db_path:
-            return {"ok": False, "error": "db_path is required for query_db"}
-
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
-            cursor = conn.execute(sql)
-            rows = cursor.fetchmany(20)
-            columns = [item[0] for item in cursor.description or []]
-        finally:
-            conn.close()
+            result = execute_read_only_query(
+                sql=sql,
+                db_url=db_url,
+                sqlite_path=db_path,
+                limit=20,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
 
-        self.state["last_db_rows"] = rows
-        serialized_rows = [list(row) for row in rows]
+        self.state["last_db_rows"] = result.rows
         return {
             "ok": True,
-            "columns": columns,
-            "row_count": len(rows),
-            "rows": serialized_rows,
+            "columns": result.columns,
+            "row_count": len(result.rows),
+            "rows": result.rows,
         }
+
+    def _handle_save_storage_state(self, params: dict[str, Any]) -> dict[str, Any]:
+        target_path = str(params.get("path", "")).strip() or self.storage_state_path
+        if not target_path:
+            return {"ok": False, "error": "storage_state_path is required"}
+        page = self._ensure_page()
+        _ = page  # ensure context exists
+        Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+        self._context.storage_state(path=target_path)
+        self.state["storage_state_path"] = target_path
+        return {"ok": True, "path": target_path}
 
     def _handle_assert_expectation(self, params: dict[str, Any]) -> dict[str, Any]:
         expected = str(params.get("expected", "")).strip()
@@ -208,7 +231,14 @@ class PlaywrightRuntimeClient:
     def _ensure_page(self) -> Any:
         self._ensure_browser()
         if self._context is None:
-            self._context = self._browser.new_context(ignore_https_errors=True)
+            storage_path = self._resolve_storage_state_path()
+            if storage_path and Path(storage_path).exists():
+                self._context = self._browser.new_context(
+                    ignore_https_errors=True,
+                    storage_state=storage_path,
+                )
+            else:
+                self._context = self._browser.new_context(ignore_https_errors=True)
         if self._page is None:
             self._page = self._context.new_page()
             self._page.set_default_timeout(self.browser_timeout_ms)
@@ -251,6 +281,18 @@ class PlaywrightRuntimeClient:
         self._page.screenshot(path=str(screenshot_path), full_page=True)
         return str(screenshot_path)
 
+    def _resolve_storage_state_path(self) -> str:
+        return self.storage_state_path.strip()
+
+    def _save_storage_state_if_enabled(self) -> None:
+        if not self.persist_storage_state:
+            return
+        storage_path = self._resolve_storage_state_path()
+        if not storage_path or self._context is None:
+            return
+        Path(storage_path).parent.mkdir(parents=True, exist_ok=True)
+        self._context.storage_state(path=storage_path)
+
     @staticmethod
     def _guess_input_selector(field: str) -> str:
         normalized = field.lower()
@@ -269,11 +311,6 @@ class PlaywrightRuntimeClient:
             "search": "button[name='search'], button#search, button[type='submit']",
         }
         return mapping.get(normalized, f"button[name='{target}'], button#{target}")
-
-    @staticmethod
-    def _is_read_only_query(sql: str) -> bool:
-        stripped = sql.strip().lower()
-        return stripped.startswith("select") or stripped.startswith("with ")
 
     @staticmethod
     def _tokenize(text: str) -> list[str]:

@@ -13,8 +13,9 @@
 
 - Playwright 真浏览器执行器（支持截图证据）
 - API 调用断言（状态码与响应片段）
-- DB 只读校验（仅允许 SELECT/WITH，SQLite read-only）
+- DB 只读校验（仅允许 SELECT/WITH，支持 SQLite / PostgreSQL / MySQL）
 - SQLite 任务与运行历史存储
+- 并发 worker 队列 + 失败重试
 - FastAPI 后端接口
 - HTML 报告页（`/runs/{id}/report.html`）
 
@@ -29,6 +30,12 @@ python3 -m pip install -e ".[dev]"
 ```bash
 python3 -m pip install -e ".[playwright]"
 python3 -m playwright install chromium
+```
+
+如需 PostgreSQL / MySQL 只读校验：
+
+```bash
+python3 -m pip install -e ".[db]"
 ```
 
 ## CLI 使用
@@ -49,7 +56,18 @@ auto-test-agent \
   --source "https://example.com" \
   --runtime-mode playwright \
   --base-url "https://example.com" \
+  --storage-state-path ".state/user.json" \
   --artifacts-dir "artifacts" \
+  --output report.json
+```
+
+使用数据库 URL（query_db 动作会默认读取）：
+
+```bash
+auto-test-agent \
+  --source "系统需要支持数据库查询" \
+  --runtime-mode playwright \
+  --db-url "postgresql://user:pass@127.0.0.1:5432/appdb" \
   --output report.json
 ```
 
@@ -84,10 +102,12 @@ auto-test-agent-api
 - `POST /tasks`：创建任务（可自动执行）
 - `GET /tasks`：任务列表
 - `POST /tasks/{task_id}/runs`：执行任务
+- `POST /tasks/{task_id}/run-jobs`：加入异步队列
 - `GET /tasks/{task_id}/runs`：运行历史
 - `GET /runs/{run_id}`：运行详情
 - `GET /runs/{run_id}/report`：报告 JSON
 - `GET /runs/{run_id}/report.html`：报告页面
+- `GET /run-jobs` / `GET /run-jobs/{job_id}`：查询队列任务状态
 
 示例（创建并执行）：
 
@@ -97,7 +117,9 @@ curl -X POST http://127.0.0.1:8000/tasks \
   -d '{
     "source": "系统需要支持用户登录并支持商品搜索",
     "runtime_mode": "mock",
-    "auto_run": true
+    "auto_run": true,
+    "auto_run_async": true,
+    "max_attempts": 3
   }'
 ```
 

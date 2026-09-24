@@ -66,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="playwright 与 API 相对路径调用时使用的基础地址",
     )
     parser.add_argument(
+        "--db-url",
+        default="",
+        help="query_db 动作默认使用的数据库 URL（支持 sqlite/postgresql/mysql）",
+    )
+    parser.add_argument(
         "--db-path",
         default="",
         help="query_db 动作默认使用的 SQLite 数据库文件路径",
@@ -80,6 +85,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="playwright 使用有头模式（默认无头）",
     )
+    parser.add_argument(
+        "--storage-state-path",
+        default="",
+        help="playwright 登录态文件路径（存在则加载，登录后可自动保存）",
+    )
+    parser.add_argument(
+        "--disable-storage-state-save",
+        action="store_true",
+        help="禁用 playwright 登录后自动保存 storage state",
+    )
     return parser
 
 
@@ -91,8 +106,11 @@ def main() -> None:
         workflow_agent = WorkflowTestAgent.default(
             runtime_mode=args.runtime_mode,
             base_url=args.base_url,
+            db_url=args.db_url,
             db_path=args.db_path,
             artifacts_dir=args.artifacts_dir,
+            storage_state_path=args.storage_state_path,
+            persist_storage_state=not args.disable_storage_state_save,
             browser_headless=not args.browser_headed,
             mcp_endpoint=args.mcp_endpoint or None,
             mcp_token=args.mcp_token,
