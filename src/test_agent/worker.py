@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import threading
 import time
 from typing import Callable
@@ -21,6 +21,8 @@ class RunJobWorkerPool:
     execute_task_fn: ExecuteTaskFn
     worker_count: int = 2
     poll_interval_seconds: float = 0.5
+    _stop_event: threading.Event = field(init=False, repr=False)
+    _threads: list[threading.Thread] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._stop_event = threading.Event()

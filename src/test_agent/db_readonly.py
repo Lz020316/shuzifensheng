@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import re
 import sqlite3
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 _DANGEROUS_SQL_RE = re.compile(
     r"\b(insert|update|delete|drop|alter|truncate|create|replace|grant|revoke)\b",
@@ -123,8 +123,10 @@ def _execute_mysql(*, sql: str, db_url: str, limit: int) -> QueryResult:
 
 def _sqlite_path_from_url(db_url: str) -> str:
     parsed = urlparse(db_url)
-    path = parsed.path
+    path = unquote(parsed.path)
     if parsed.netloc and parsed.netloc != "":
         # sqlite:///path and sqlite://relative-path compatibility
         path = f"/{parsed.netloc}{path}"
+    while path.startswith("//"):
+        path = path[1:]
     return path
