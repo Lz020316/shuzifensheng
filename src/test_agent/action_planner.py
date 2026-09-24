@@ -76,10 +76,15 @@ class ActionPlanner:
             )
 
         if any(token in lowered for token in ("api", "接口", "endpoint")):
-            actions.append(("call_api", {"endpoint": "/api/health"}))
+            actions.append(
+                (
+                    "call_api",
+                    {"endpoint": "/api/health", "method": "GET", "expected_status": 200},
+                )
+            )
 
         if any(token in lowered for token in ("数据库", "db", "mysql", "postgres")):
-            actions.append(("query_db", {"sql": "SELECT 1"}))
+            actions.append(("query_db", {"sql": "SELECT 1 AS ok"}))
 
         actions.append(("assert_expectation", {"expected": expected}))
         return actions

@@ -54,6 +54,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="允许访问的域名（可重复传入，留空表示不限制）",
     )
+    parser.add_argument(
+        "--runtime-mode",
+        choices=["mock", "playwright"],
+        default="mock",
+        help="工作流执行模式：mock 或 playwright",
+    )
+    parser.add_argument(
+        "--base-url",
+        default="",
+        help="playwright 与 API 相对路径调用时使用的基础地址",
+    )
+    parser.add_argument(
+        "--db-path",
+        default="",
+        help="query_db 动作默认使用的 SQLite 数据库文件路径",
+    )
+    parser.add_argument(
+        "--artifacts-dir",
+        default="artifacts",
+        help="截图与日志等证据文件输出目录",
+    )
+    parser.add_argument(
+        "--browser-headed",
+        action="store_true",
+        help="playwright 使用有头模式（默认无头）",
+    )
     return parser
 
 
@@ -63,6 +89,11 @@ def main() -> None:
 
     if args.source:
         workflow_agent = WorkflowTestAgent.default(
+            runtime_mode=args.runtime_mode,
+            base_url=args.base_url,
+            db_path=args.db_path,
+            artifacts_dir=args.artifacts_dir,
+            browser_headless=not args.browser_headed,
             mcp_endpoint=args.mcp_endpoint or None,
             mcp_token=args.mcp_token,
             allow_private_url=args.allow_private_url,

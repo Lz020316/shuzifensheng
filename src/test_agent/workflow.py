@@ -11,6 +11,7 @@ from .action_planner import ActionPlanner
 from .case_generator import TestCaseGenerator
 from .mcp_executor import HttpMCPClient, LocalMockMCPClient, MCPExecutor
 from .models import ActionPoint, CaseEvaluation, MCPCallResult, TestCase
+from .runtime_client import PlaywrightRuntimeClient
 from .source_loader import SourceLoader
 from .verifier import ResultVerifier
 
@@ -29,6 +30,11 @@ class WorkflowTestAgent:
     def default(
         cls,
         *,
+        runtime_mode: str = "mock",
+        base_url: str = "",
+        db_path: str = "",
+        artifacts_dir: str = "artifacts",
+        browser_headless: bool = True,
         mcp_endpoint: str | None = None,
         mcp_token: str = "",
         allow_private_url: bool = False,
@@ -37,6 +43,13 @@ class WorkflowTestAgent:
         """Construct workflow agent with built-in components."""
         if mcp_endpoint:
             client = HttpMCPClient(endpoint=mcp_endpoint, bearer_token=mcp_token)
+        elif runtime_mode == "playwright":
+            client = PlaywrightRuntimeClient(
+                base_url=base_url,
+                db_path=db_path,
+                artifacts_dir=artifacts_dir,
+                headless=browser_headless,
+            )
         else:
             client = LocalMockMCPClient()
 
@@ -89,6 +102,10 @@ class WorkflowTestAgent:
                 call_results=call_results,
                 evaluations=evaluations,
             )
+        finally:
+            close_fn = getattr(self.executor.client, "close", None)
+            if callable(close_fn):
+                close_fn()
 
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -109,6 +126,7 @@ class WorkflowTestAgent:
             "action_points": [self._serialize_action(action) for action in actions],
             "mcp_results": [self._serialize_call_result(item) for item in call_results],
             "case_results": [self._serialize_evaluation(item) for item in evaluations],
+            "artifacts": self._collect_artifacts(call_results),
             "errors": [],
         }
 
@@ -169,6 +187,7 @@ class WorkflowTestAgent:
             "action_points": [self._serialize_action(action) for action in actions],
             "mcp_results": [self._serialize_call_result(item) for item in call_results],
             "case_results": [self._serialize_evaluation(item) for item in evaluations],
+            "artifacts": self._collect_artifacts(call_results),
             "errors": [
                 {
                     "stage": stage,
@@ -216,3 +235,22 @@ class WorkflowTestAgent:
             "evidence": evaluation.evidence,
             "mismatches": evaluation.mismatches,
         }
+
+    @staticmethod
+    def _collect_artifacts(results: list[MCPCallResult]) -> list[dict[str, str]]:
+        artifacts: list[dict[str, str]] = []
+        for item in results:
+            evidence = item.output.get("evidence")
+            if not isinstance(evidence, dict):
+                continue
+            screenshot = evidence.get("screenshot")
+            if isinstance(screenshot, str) and screenshot:
+                artifacts.append(
+                    {
+                        "action_id": item.action_id,
+                        "case_id": item.case_id,
+                        "type": "screenshot",
+                        "path": screenshot,
+                    }
+                )
+        return artifacts

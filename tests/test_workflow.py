@@ -21,6 +21,7 @@ def test_workflow_agent_generates_cases_actions_and_report() -> None:
     action_points = report["action_points"]
     assert isinstance(action_points, list)
     assert any(item["action"] == "assert_expectation" for item in action_points)
+    assert "artifacts" in report
     assert report["errors"] == []
 
 
