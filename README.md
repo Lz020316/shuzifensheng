@@ -74,6 +74,13 @@ auto-test-agent --source "./docs/sample.prd" --output report.json
 
 ```bash
 auto-test-agent --source "系统需要支持用户登录并支持商品搜索" --output report.json
+
+# 接真实 MCP（HTTP）
+auto-test-agent \
+  --source "系统需要支持用户登录并支持商品搜索" \
+  --mcp-endpoint "https://mcp.example.internal/execute" \
+  --mcp-token "YOUR_TOKEN" \
+  --output report.json
 ```
 
 ### 3) 兼容旧模式（命令式测试）
@@ -93,6 +100,7 @@ pytest -q
 ```json
 {
   "generated_at": "2026-05-06T09:00:00+00:00",
+  "status": "ok",
   "input": {
     "kind": "prd",
     "identifier": "./docs/sample.prd",
@@ -111,14 +119,25 @@ pytest -q
   "test_cases": [],
   "action_points": [],
   "mcp_results": [],
-  "case_results": []
+  "case_results": [],
+  "errors": []
 }
 ```
 
 ## MCP 接入说明
 
 当前默认使用 `LocalMockMCPClient`（本地 mock）演示端到端流程。  
-接入真实 MCP 时，只需要实现同样的接口：
+如果传入 `--mcp-endpoint`，会切换为 `HttpMCPClient` 发起真实 HTTP 调用。
+
+### URL 安全控制（防 SSRF）
+
+- 默认禁止访问 `localhost / 127.0.0.1 / 内网地址`
+- 可通过 `--allow-private-url` 放开（仅建议内网受控环境）
+- 可通过 `--allowed-domain` 多次指定白名单域名
+
+### 自定义 MCP Client
+
+你也可以实现同样接口并替换：
 
 - `invoke(action: str, params: dict[str, Any]) -> dict[str, Any]`
 

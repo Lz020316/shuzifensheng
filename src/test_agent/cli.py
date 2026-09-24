@@ -33,6 +33,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=20_000,
         help="报告中保留的日志最大字符数",
     )
+    parser.add_argument(
+        "--mcp-endpoint",
+        default="",
+        help="真实 MCP HTTP 接口地址（不传则使用本地 mock）",
+    )
+    parser.add_argument(
+        "--mcp-token",
+        default="",
+        help="调用 MCP 的 Bearer Token（可选）",
+    )
+    parser.add_argument(
+        "--allow-private-url",
+        action="store_true",
+        help="允许访问内网地址（默认禁用，避免 SSRF 风险）",
+    )
+    parser.add_argument(
+        "--allowed-domain",
+        action="append",
+        default=[],
+        help="允许访问的域名（可重复传入，留空表示不限制）",
+    )
     return parser
 
 
@@ -41,7 +62,12 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.source:
-        workflow_agent = WorkflowTestAgent.default()
+        workflow_agent = WorkflowTestAgent.default(
+            mcp_endpoint=args.mcp_endpoint or None,
+            mcp_token=args.mcp_token,
+            allow_private_url=args.allow_private_url,
+            allowed_domains=tuple(args.allowed_domain),
+        )
         report = workflow_agent.run(args.source)
         report_json = workflow_agent.to_json(report)
     else:

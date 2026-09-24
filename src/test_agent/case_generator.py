@@ -56,6 +56,7 @@ class TestCaseGenerator:
         extracted = self._extract_requirement_lines(artifact.content)
         if not extracted:
             extracted = self._extract_sentence_candidates(artifact.content)
+        extracted = self._deduplicate(extracted)
 
         cases: list[TestCase] = []
         for idx, requirement in enumerate(extracted[: self.max_cases], start=1):
@@ -70,6 +71,18 @@ class TestCaseGenerator:
                 )
             )
         return cases
+
+    @staticmethod
+    def _deduplicate(items: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for item in items:
+            normalized = re.sub(r"\s+", " ", item).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result
 
     @staticmethod
     def _extract_requirement_lines(content: str) -> list[str]:

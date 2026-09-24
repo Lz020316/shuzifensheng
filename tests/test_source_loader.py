@@ -14,6 +14,7 @@ def test_source_loader_reads_local_prd_file(tmp_path: Path) -> None:
     assert artifact.identifier == str(prd)
     assert "系统需要支持用户登录" in artifact.content
     assert artifact.metadata["extension"] == "prd"
+    assert artifact.metadata["encoding"] == "utf-8"
 
 
 def test_source_loader_uses_inline_text_when_path_not_exists() -> None:
@@ -23,3 +24,13 @@ def test_source_loader_uses_inline_text_when_path_not_exists() -> None:
     assert artifact.kind == "text"
     assert artifact.identifier == "inline-text"
     assert "提交订单" in artifact.content
+
+
+def test_source_loader_blocks_private_network_url_by_default() -> None:
+    loader = SourceLoader()
+    try:
+        loader.load("http://127.0.0.1:8080")
+    except ValueError as exc:
+        assert "禁止访问内网地址" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for private network url")

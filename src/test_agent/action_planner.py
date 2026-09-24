@@ -35,9 +35,25 @@ class ActionPlanner:
     ) -> list[tuple[str, dict[str, Any]]]:
         actions: list[tuple[str, dict[str, Any]]] = []
         if artifact.kind == "website":
-            actions.append(("open_page", {"url": artifact.identifier}))
+            actions.append(
+                (
+                    "open_page",
+                    {
+                        "url": artifact.identifier,
+                        "expected_title": artifact.metadata.get("title", ""),
+                    },
+                )
+            )
         else:
-            actions.append(("load_requirement_context", {"source": artifact.identifier}))
+            actions.append(
+                (
+                    "load_requirement_context",
+                    {
+                        "source": artifact.identifier,
+                        "content": artifact.content[:1_000],
+                    },
+                )
+            )
 
         expected = case.expected_result
         lowered = expected.lower()
@@ -58,6 +74,12 @@ class ActionPlanner:
                     ("click", {"target": "search"}),
                 ]
             )
+
+        if any(token in lowered for token in ("api", "接口", "endpoint")):
+            actions.append(("call_api", {"endpoint": "/api/health"}))
+
+        if any(token in lowered for token in ("数据库", "db", "mysql", "postgres")):
+            actions.append(("query_db", {"sql": "SELECT 1"}))
 
         actions.append(("assert_expectation", {"expected": expected}))
         return actions

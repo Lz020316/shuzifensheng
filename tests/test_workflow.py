@@ -8,11 +8,9 @@ def test_workflow_agent_generates_cases_actions_and_report() -> None:
     """.strip()
 
     agent = WorkflowTestAgent.default()
-    # 预置页面文本，保证断言动作能够命中关键词。
-    agent.executor.client.state["page_text"] = "系统需要支持用户登录与商品搜索"
-
     report = agent.run(source)
 
+    assert report["status"] == "ok"
     summary = report["summary"]
     assert isinstance(summary, dict)
     assert summary["test_case_count"] >= 2
@@ -23,3 +21,15 @@ def test_workflow_agent_generates_cases_actions_and_report() -> None:
     action_points = report["action_points"]
     assert isinstance(action_points, list)
     assert any(item["action"] == "assert_expectation" for item in action_points)
+    assert report["errors"] == []
+
+
+def test_workflow_agent_returns_structured_error_report() -> None:
+    agent = WorkflowTestAgent.default()
+    report = agent.run("http://127.0.0.1:3000")
+
+    assert report["status"] == "error"
+    errors = report["errors"]
+    assert isinstance(errors, list)
+    assert errors
+    assert errors[0]["stage"] == "source_loading"
