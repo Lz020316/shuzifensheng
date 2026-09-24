@@ -103,6 +103,7 @@ auto-test-agent-api
 - `GET /tasks`：任务列表
 - `POST /tasks/{task_id}/runs`：执行任务
 - `POST /tasks/{task_id}/run-jobs`：加入异步队列
+- `POST /run-jobs/{job_id}/cancel`：取消队列任务
 - `GET /tasks/{task_id}/runs`：运行历史
 - `GET /runs/{run_id}`：运行详情
 - `GET /runs/{run_id}/report`：报告 JSON
@@ -119,8 +120,17 @@ curl -X POST http://127.0.0.1:8000/tasks \
     "runtime_mode": "mock",
     "auto_run": true,
     "auto_run_async": true,
-    "max_attempts": 3
+    "max_attempts": 3,
+    "queue_priority": 50
   }'
+```
+
+取消队列任务：
+
+```bash
+curl -X POST http://127.0.0.1:8000/run-jobs/1/cancel \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"manual stop"}'
 ```
 
 ## URL 安全控制（防 SSRF）

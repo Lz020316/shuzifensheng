@@ -57,6 +57,16 @@ class RunJobWorkerPool:
             self._process_job(job)
 
     def _process_job(self, job: RunJobRecord) -> None:
+        latest_job = self.repository.get_run_job(job.job_id)
+        if latest_job is None:
+            return
+        if latest_job.cancel_requested:
+            self.repository.mark_run_job_canceled(
+                job.job_id,
+                reason="job canceled before execution",
+            )
+            return
+
         task = self.repository.get_task(job.task_id)
         if task is None:
             self.repository.mark_run_job_failed(
@@ -69,9 +79,24 @@ class RunJobWorkerPool:
         try:
             run = self.execute_task_fn(task, job.override_source)
         except Exception as exc:  # noqa: BLE001
+            refreshed = self.repository.get_run_job(job.job_id)
+            if refreshed is not None and refreshed.cancel_requested:
+                self.repository.mark_run_job_canceled(
+                    job.job_id,
+                    reason=f"job canceled during retry window: {exc}",
+                )
+                return
+
             should_retry = job.attempt_count < job.max_attempts
             self.repository.mark_run_job_failed(job.job_id, str(exc), retry=should_retry)
             if should_retry:
-                time.sleep(min(1.5, self.poll_interval_seconds * 2))
+                delay = self._compute_retry_delay_seconds(job.attempt_count)
+                time.sleep(delay)
             return
         self.repository.mark_run_job_succeeded(job.job_id, run.run_id)
+
+    @staticmethod
+    def _compute_retry_delay_seconds(attempt_count: int) -> float:
+        """Exponential backoff delay by attempt count."""
+        base = 0.4
+        return min(8.0, base * (2 ** max(0, attempt_count - 1)))

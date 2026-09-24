@@ -54,6 +54,7 @@ def test_server_async_run_job_worker(tmp_path: Path) -> None:
                 "auto_run": True,
                 "auto_run_async": True,
                 "max_attempts": 2,
+                "queue_priority": 80,
             },
         )
         assert create_response.status_code == 200
@@ -74,3 +75,35 @@ def test_server_async_run_job_worker(tmp_path: Path) -> None:
         assert final_job is not None
         assert final_job["status"] == "succeeded"
         assert final_job["run_id"] > 0
+        assert final_job["priority"] == 80
+
+
+def test_server_can_cancel_queued_job(tmp_path: Path) -> None:
+    db_file = tmp_path / "agent.db"
+    app = create_app(db_file=str(db_file), worker_count=1, poll_interval_seconds=5)
+    with TestClient(app) as client:
+        task_response = client.post(
+            "/tasks",
+            json={
+                "source": "系统需要支持用户登录",
+                "runtime_mode": "mock",
+                "auto_run": False,
+            },
+        )
+        assert task_response.status_code == 200
+        task_id = task_response.json()["task"]["task_id"]
+
+        job_response = client.post(
+            f"/tasks/{task_id}/run-jobs",
+            json={"max_attempts": 2, "priority": 10},
+        )
+        assert job_response.status_code == 200
+        job_id = job_response.json()["job"]["job_id"]
+
+        cancel_response = client.post(
+            f"/run-jobs/{job_id}/cancel",
+            json={"reason": "manual cancel"},
+        )
+        assert cancel_response.status_code == 200
+        canceled = cancel_response.json()["job"]
+        assert canceled["status"] == "canceled"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from contextlib import asynccontextmanager
 import json
 from pathlib import Path
 from typing import Any, Literal
@@ -40,6 +41,7 @@ class TaskCreateRequest(BaseModel):
     auto_run: bool = True
     auto_run_async: bool = False
     max_attempts: int = Field(default=2, ge=1, le=10)
+    queue_priority: int = Field(default=100, ge=1, le=1000)
 
 
 class TaskRunRequest(BaseModel):
@@ -53,6 +55,13 @@ class RunJobCreateRequest(BaseModel):
 
     override_source: str = ""
     max_attempts: int = Field(default=2, ge=1, le=10)
+    priority: int = Field(default=100, ge=1, le=1000)
+
+
+class RunJobCancelRequest(BaseModel):
+    """Request body for canceling run jobs."""
+
+    reason: str = ""
 
 
 def create_app(
@@ -73,19 +82,16 @@ def create_app(
         poll_interval_seconds=poll_interval_seconds,
     )
 
-    app = FastAPI(title="Auto Test Agent API", version="0.2.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):  # type: ignore[override]
+        worker_pool.start()
+        yield
+        worker_pool.stop()
 
+    app = FastAPI(title="Auto Test Agent API", version="0.2.0", lifespan=lifespan)
     artifacts_dir = Path("artifacts")
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/artifacts", StaticFiles(directory=str(artifacts_dir)), name="artifacts")
-
-    @app.on_event("startup")
-    def on_startup() -> None:
-        worker_pool.start()
-
-    @app.on_event("shutdown")
-    def on_shutdown() -> None:
-        worker_pool.stop()
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -99,10 +105,15 @@ def create_app(
         auto_run = bool(config.pop("auto_run"))
         auto_run_async = bool(config.pop("auto_run_async"))
         max_attempts = int(config.pop("max_attempts"))
+        queue_priority = int(config.pop("queue_priority"))
         task = repository.create_task(source=source, runtime_mode=runtime_mode, config=config)
         response: dict[str, Any] = {"task": _serialize_task(task)}
         if auto_run and auto_run_async:
-            job = repository.create_run_job(task_id=task.task_id, max_attempts=max_attempts)
+            job = repository.create_run_job(
+                task_id=task.task_id,
+                max_attempts=max_attempts,
+                priority=queue_priority,
+            )
             response["job"] = _serialize_run_job(job)
         elif auto_run:
             run = _execute_task(repository=repository, task=task)
@@ -142,8 +153,19 @@ def create_app(
             task_id=task_id,
             override_source=request.override_source,
             max_attempts=request.max_attempts,
+            priority=request.priority,
         )
         return {"task": _serialize_task(task), "job": _serialize_run_job(job)}
+
+    @app.post("/run-jobs/{job_id}/cancel")
+    def cancel_run_job(job_id: int, request: RunJobCancelRequest) -> dict[str, Any]:
+        job = repository.request_cancel_run_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="run job not found")
+        if request.reason and job.status == "canceled":
+            repository.mark_run_job_canceled(job_id, reason=request.reason)
+            job = repository.get_run_job(job_id) or job
+        return {"job": _serialize_run_job(job)}
 
     @app.get("/tasks/{task_id}/runs")
     def list_runs(task_id: int, limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:

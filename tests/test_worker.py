@@ -44,3 +44,9 @@ def test_worker_pool_retries_failed_job(tmp_path: Path) -> None:
     assert final_job is not None
     assert final_job.status == "succeeded"
     assert final_job.attempt_count >= 2
+
+
+def test_worker_retry_backoff_growth() -> None:
+    assert RunJobWorkerPool._compute_retry_delay_seconds(1) == 0.4
+    assert RunJobWorkerPool._compute_retry_delay_seconds(2) == 0.8
+    assert RunJobWorkerPool._compute_retry_delay_seconds(5) <= 8.0

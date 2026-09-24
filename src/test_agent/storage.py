@@ -42,6 +42,8 @@ class RunJobRecord:
     status: str
     max_attempts: int
     attempt_count: int
+    priority: int
+    cancel_requested: bool
     run_id: int
     last_error: str
     created_at: str
@@ -186,6 +188,7 @@ class TaskRepository:
         task_id: int,
         override_source: str = "",
         max_attempts: int = 2,
+        priority: int = 100,
     ) -> RunJobRecord:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
@@ -193,11 +196,12 @@ class TaskRepository:
                 """
                 INSERT INTO run_jobs(
                     task_id, override_source, status, max_attempts,
-                    attempt_count, run_id, last_error, created_at, updated_at
+                    attempt_count, priority, cancel_requested, run_id,
+                    last_error, created_at, updated_at
                 )
-                VALUES(?, ?, 'queued', ?, 0, 0, '', ?, ?)
+                VALUES(?, ?, 'queued', ?, 0, ?, 0, 0, '', ?, ?)
                 """,
-                (task_id, override_source, max_attempts, now, now),
+                (task_id, override_source, max_attempts, priority, now, now),
             )
             job_id = int(cursor.lastrowid)
         return self.get_run_job(job_id)  # type: ignore[return-value]
@@ -208,7 +212,8 @@ class TaskRepository:
                 """
                 SELECT
                     job_id, task_id, override_source, status, max_attempts,
-                    attempt_count, run_id, last_error, created_at, updated_at
+                    attempt_count, priority, cancel_requested, run_id,
+                    last_error, created_at, updated_at
                 FROM run_jobs
                 WHERE job_id = ?
                 """,
@@ -222,7 +227,8 @@ class TaskRepository:
                 """
                 SELECT
                     job_id, task_id, override_source, status, max_attempts,
-                    attempt_count, run_id, last_error, created_at, updated_at
+                    attempt_count, priority, cancel_requested, run_id,
+                    last_error, created_at, updated_at
                 FROM run_jobs
                 ORDER BY job_id DESC
                 LIMIT ?
@@ -244,10 +250,11 @@ class TaskRepository:
                 """
                 SELECT
                     job_id, task_id, override_source, status, max_attempts,
-                    attempt_count, run_id, last_error, created_at, updated_at
+                    attempt_count, priority, cancel_requested, run_id,
+                    last_error, created_at, updated_at
                 FROM run_jobs
-                WHERE status = 'queued'
-                ORDER BY job_id ASC
+                WHERE status = 'queued' AND cancel_requested = 0
+                ORDER BY priority ASC, job_id ASC
                 LIMIT 1
                 """
             ).fetchone()
@@ -294,6 +301,58 @@ class TaskRepository:
                 (next_status, error[:500], now, job_id),
             )
 
+    def mark_run_job_canceled(self, job_id: int, reason: str = "") -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE run_jobs
+                SET status = 'canceled',
+                    cancel_requested = 1,
+                    last_error = ?,
+                    updated_at = ?
+                WHERE job_id = ?
+                """,
+                (reason[:500], now, job_id),
+            )
+
+    def request_cancel_run_job(self, job_id: int) -> RunJobRecord | None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status
+                FROM run_jobs
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            status = str(row[0])
+            if status == "queued":
+                conn.execute(
+                    """
+                    UPDATE run_jobs
+                    SET status = 'canceled',
+                        cancel_requested = 1,
+                        updated_at = ?
+                    WHERE job_id = ?
+                    """,
+                    (now, job_id),
+                )
+            elif status == "running":
+                conn.execute(
+                    """
+                    UPDATE run_jobs
+                    SET cancel_requested = 1,
+                        updated_at = ?
+                    WHERE job_id = ?
+                    """,
+                    (now, job_id),
+                )
+        return self.get_run_job(job_id)
+
     def _ensure_schema(self) -> None:
         db_parent = Path(self.db_file).parent
         db_parent.mkdir(parents=True, exist_ok=True)
@@ -330,6 +389,8 @@ class TaskRepository:
                     status TEXT NOT NULL,
                     max_attempts INTEGER NOT NULL DEFAULT 2,
                     attempt_count INTEGER NOT NULL DEFAULT 0,
+                    priority INTEGER NOT NULL DEFAULT 100,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
                     run_id INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
@@ -339,6 +400,8 @@ class TaskRepository:
                 )
                 """
             )
+            self._ensure_column(conn, "run_jobs", "priority", "INTEGER NOT NULL DEFAULT 100")
+            self._ensure_column(conn, "run_jobs", "cancel_requested", "INTEGER NOT NULL DEFAULT 0")
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_file, timeout=20, isolation_level=None)
@@ -354,8 +417,17 @@ class TaskRepository:
             status=str(row[3]),
             max_attempts=int(row[4]),
             attempt_count=int(row[5]),
-            run_id=int(row[6]),
-            last_error=str(row[7]),
-            created_at=str(row[8]),
-            updated_at=str(row[9]),
+            priority=int(row[6]),
+            cancel_requested=bool(row[7]),
+            run_id=int(row[8]),
+            last_error=str(row[9]),
+            created_at=str(row[10]),
+            updated_at=str(row[11]),
         )
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+        columns = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        if any(item[1] == column for item in columns):
+            return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")

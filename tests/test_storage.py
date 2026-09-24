@@ -33,6 +33,8 @@ def test_task_repository_persists_tasks_and_runs(tmp_path: Path) -> None:
 
     job = repository.create_run_job(task_id=task.task_id, max_attempts=2)
     assert job.status == "queued"
+    assert job.priority == 100
+    assert job.cancel_requested is False
     claimed = repository.claim_next_job()
     assert claimed is not None
     assert claimed.job_id == job.job_id
@@ -49,3 +51,8 @@ def test_task_repository_persists_tasks_and_runs(tmp_path: Path) -> None:
     done = repository.get_run_job(job.job_id)
     assert done is not None
     assert done.status == "succeeded"
+
+    cancel_job = repository.create_run_job(task_id=task.task_id, max_attempts=1, priority=50)
+    canceled = repository.request_cancel_run_job(cancel_job.job_id)
+    assert canceled is not None
+    assert canceled.status == "canceled"
