@@ -1,0 +1,84 @@
+# 数字分身的一小段个人知识。类别和关系使用中文说法。
+
+self 类型 Person
+self 标签.zh 我
+self 名称 我
+self 摘要 把经历、技能和判断收成可查询的知识本体
+
+skill:python 类型 Skill
+skill:python 标签.zh Python
+skill:python 名称 Python
+skill:python 熟练度 1
+
+topic:ontology 类型 Topic
+topic:ontology 标签.zh 知识本体
+topic:ontology 名称 知识本体
+
+pref:concise 类型 Preference
+pref:concise 标签.zh 简洁表达
+pref:concise 名称 简洁表达
+pref:concise 强度 1
+pref:concise 关于 topic:ontology
+
+goal:ontology 类型 Goal
+goal:ontology 标签.zh 建好个人知识本体
+goal:ontology 名称 建好个人知识本体
+goal:ontology 优先级 1
+goal:ontology 关于 topic:ontology
+
+belief:struct 类型 Belief
+belief:struct 标签.zh 知识应该有结构
+belief:struct 名称 知识应该有结构
+belief:struct 强度 0.5
+belief:struct 关于 topic:ontology
+
+memory:why 类型 Memory
+memory:why 标签.zh 想把经历变成可查询的知识
+memory:why 名称 想把经历变成可查询的知识
+memory:why 关于 topic:ontology
+
+exp:first 类型 Experience
+exp:first 标签.zh 第一次把知识收成本体
+exp:first 名称 第一次把知识收成本体
+exp:first 开始时间 2026-09-29T00:00:00+08:00
+exp:first 关于 topic:ontology
+
+org:lab 类型 Organization
+org:lab 标签.zh 个人实验室
+org:lab 名称 个人实验室
+
+proj:onto 类型 Project
+proj:onto 标签.zh 知识本体
+proj:onto 名称 知识本体项目
+proj:onto 从属于 org:lab
+
+place:zhejiang 类型 Place
+place:zhejiang 标签.zh 浙江
+place:zhejiang 名称 浙江
+
+place:hangzhou 类型 Place
+place:hangzhou 标签.zh 杭州
+place:hangzhou 名称 杭州
+place:hangzhou 位于 place:zhejiang
+
+place:xihu 类型 Place
+place:xihu 标签.zh 西湖
+place:xihu 名称 西湖
+place:xihu 位于 place:hangzhou
+
+person:lin 类型 Person
+person:lin 标签.zh 林
+person:lin 名称 林
+
+self 掌握 skill:python
+self 偏好 pref:concise
+self 追求 goal:ontology
+self 持有 belief:struct
+self 记得 memory:why
+self 参与 exp:first
+self 参与 proj:onto
+self 隶属于 org:lab
+self 位于 place:xihu
+org:lab 位于 place:hangzhou
+self 认识 person:lin
+exp:first 从属于 proj:onto
